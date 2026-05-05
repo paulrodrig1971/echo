@@ -689,6 +689,28 @@ function removeThinking() {
   if (el) el.remove();
 }
 
+// Fenetre glissante : garde les messages recents dans la limite de ~80k caracteres
+// pour ne jamais depasser la fenetre de contexte de l'API (200k tokens)
+function getContextWindow(history, maxChars) {
+  maxChars = maxChars || 80000;
+  var total = 0;
+  var win = [];
+  for (var i = history.length - 1; i >= 0; i--) {
+    var msgLen = history[i].content.length;
+    if (total + msgLen > maxChars) break;
+    win.unshift(history[i]);
+    total += msgLen;
+  }
+  // L'API exige que le premier message soit de role 'user'
+  while (win.length > 0 && win[0].role !== 'user') {
+    win.shift();
+  }
+  if (win.length === 0) {
+    win = [history[history.length - 1]];
+  }
+  return win;
+}
+
 async function sendMessage() {
   const input = document.getElementById('input');
   const text = input.value.trim();
@@ -704,6 +726,8 @@ async function sendMessage() {
 
   showThinking();
 
+  const contextMessages = getContextWindow(conversationHistory);
+
   try {
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -717,7 +741,7 @@ async function sendMessage() {
         model: 'claude-sonnet-4-20250514',
         max_tokens: 1000,
         system: SYSTEM_PROMPT + `\n\nL'humain avec qui tu parles s'appelle ${userName}.`,
-        messages: conversationHistory
+        messages: contextMessages
       })
     });
 
