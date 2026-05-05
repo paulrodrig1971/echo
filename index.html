@@ -514,7 +514,13 @@ const USER_NAME_STORAGE = 'echo_user_name';
 function loadMemory() {
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
-    return stored ? JSON.parse(stored) : [];
+    if (!stored) return [];
+    const parsed = JSON.parse(stored);
+    // Sanitize : on ne garde que les messages valides avec role + content non vide
+    return parsed.filter(m =>
+      m && (m.role === 'user' || m.role === 'assistant') &&
+      typeof m.content === 'string' && m.content.trim().length > 0
+    );
   } catch { return []; }
 }
 
@@ -716,19 +722,22 @@ async function sendMessage() {
     });
 
     const data = await response.json();
+    console.log('[Écho] API response:', data); // debug
     removeThinking();
 
     if (data.error) {
       // Erreur API lisible
-      const errMsg = data.error.type === 'authentication_error'
+      const errType = data.error.type || '';
+      const errMsg = errType === 'authentication_error'
         ? 'La clé API ne répond plus. Rechargez la page pour en saisir une nouvelle.'
-        : data.error.type === 'overloaded_error'
+        : errType === 'overloaded_error'
         ? 'Les serveurs Anthropic sont surchargés. Réessayez dans un instant.'
-        : `Quelque chose résiste. (${data.error.type || response.status})`;
+        : errType === 'invalid_request_error'
+        ? `Requête invalide : ${data.error.message}`
+        : `Quelque chose résiste. (${errType || response.status})`;
 
       const errEl = addMessage('echo', errMsg);
       errEl.classList.add('error');
-      // Retire le dernier message utilisateur de l'historique pour qu'il puisse réessayer
       conversationHistory.pop();
     } else {
       const reply = data.content[0].text;
