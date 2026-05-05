@@ -32,7 +32,6 @@
     overflow: hidden;
   }
 
-  /* Atmospheric background */
   body::before {
     content: '';
     position: fixed;
@@ -45,7 +44,6 @@
     z-index: 0;
   }
 
-  /* Subtle noise texture */
   body::after {
     content: '';
     position: fixed;
@@ -67,7 +65,6 @@
     padding: 0 24px;
   }
 
-  /* Header */
   header {
     padding: 32px 0 20px;
     display: flex;
@@ -119,7 +116,6 @@
     50% { opacity: 0.9; transform: scale(1.2); }
   }
 
-  /* Messages */
   #messages {
     flex: 1;
     overflow-y: auto;
@@ -164,6 +160,7 @@
     line-height: 1.75;
     font-size: 0.95rem;
     font-weight: 300;
+    white-space: pre-wrap;
   }
 
   .message.echo .message-bubble {
@@ -179,7 +176,6 @@
     margin-left: 32px;
   }
 
-  /* Thinking indicator */
   .thinking {
     display: flex;
     align-items: center;
@@ -208,7 +204,6 @@
     50% { opacity: 0.8; transform: scale(1.1); }
   }
 
-  /* Input area */
   footer {
     padding: 20px 0 28px;
     border-top: 1px solid var(--border);
@@ -267,7 +262,7 @@
   #send-btn:hover { opacity: 1; transform: translateX(2px); }
   #send-btn:disabled { opacity: 0.2; cursor: default; transform: none; }
 
-  /* API key setup */
+  /* Setup screen */
   #setup {
     position: fixed;
     inset: 0;
@@ -362,21 +357,25 @@
     border-color: rgba(168, 144, 232, 0.35);
   }
 
+  .setup-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
   .setup-error {
     color: #f87171;
     font-size: 0.8rem;
-    margin-top: 8px;
+    margin-top: 12px;
     display: none;
+    font-style: italic;
   }
 
-  /* User name */
   .user-name-section {
     margin-top: 20px;
     padding-top: 20px;
     border-top: 1px solid var(--border);
   }
 
-  /* Memory panel */
   .memory-count {
     font-size: 0.7rem;
     color: var(--text-dim);
@@ -407,6 +406,12 @@
     align-items: center;
     margin-top: 8px;
   }
+
+  /* Error message style */
+  .message.error .message-bubble {
+    border-left-color: rgba(248, 113, 113, 0.4);
+    color: rgba(248, 113, 113, 0.85);
+  }
 </style>
 </head>
 <body>
@@ -420,15 +425,15 @@
     
     <div class="setup-label">Clé API Anthropic</div>
     <input type="password" class="setup-input" id="api-key-input" placeholder="sk-ant-..." />
-    <div class="setup-note">Votre clé est stockée localement dans votre navigateur.</div>
+    <div class="setup-note">Votre clé est stockée localement dans votre navigateur, jamais transmise ailleurs.</div>
 
     <div class="user-name-section">
       <div class="setup-label">Votre nom (comment Écho doit vous appeler)</div>
       <input type="text" class="setup-input" id="user-name-input" placeholder="Tux" />
     </div>
 
-    <button class="setup-btn" onclick="initEcho()">Éveiller Écho</button>
-    <div class="setup-error" id="setup-error">Clé invalide ou erreur de connexion.</div>
+    <button class="setup-btn" id="setup-btn" onclick="initEcho()">Éveiller Écho</button>
+    <div class="setup-error" id="setup-error"></div>
   </div>
 </div>
 
@@ -502,7 +507,6 @@ let userName = 'Tux';
 let conversationHistory = [];
 let isThinking = false;
 
-// Storage keys
 const STORAGE_KEY = 'echo_memory';
 const API_KEY_STORAGE = 'echo_api_key';
 const USER_NAME_STORAGE = 'echo_user_name';
@@ -525,7 +529,8 @@ function updateMemoryCount() {
   const count = conversationHistory.length;
   const el = document.getElementById('memory-count');
   if (count > 0) {
-    el.textContent = `${Math.floor(count/2)} échange${count > 2 ? 's' : ''} en mémoire`;
+    const exchanges = Math.floor(count / 2);
+    el.textContent = `${exchanges} échange${exchanges > 1 ? 's' : ''} en mémoire`;
   } else {
     el.textContent = '';
   }
@@ -541,28 +546,81 @@ function clearMemory() {
   }
 }
 
+function showError(msg) {
+  const el = document.getElementById('setup-error');
+  el.textContent = msg;
+  el.style.display = 'block';
+}
+
+function hideError() {
+  document.getElementById('setup-error').style.display = 'none';
+}
+
 async function initEcho() {
+  hideError();
   const keyInput = document.getElementById('api-key-input').value.trim();
   const nameInput = document.getElementById('user-name-input').value.trim();
-  
-  if (!keyInput || !keyInput.startsWith('sk-ant-')) {
-    document.getElementById('setup-error').style.display = 'block';
-    document.getElementById('setup-error').textContent = 'La clé doit commencer par sk-ant-';
+
+  // ✅ FIX : validation souple — accepte sk- (anciens et nouveaux formats Anthropic)
+  if (!keyInput || !keyInput.startsWith('sk-')) {
+    showError('La clé API doit commencer par sk- (ex: sk-ant-api03-...)');
+    return;
+  }
+
+  const btn = document.getElementById('setup-btn');
+  btn.disabled = true;
+  btn.textContent = 'Connexion…';
+
+  // Test rapide de la clé avant d'ouvrir l'interface
+  try {
+    const testRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': keyInput,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 10,
+        messages: [{ role: 'user', content: 'test' }]
+      })
+    });
+
+    const testData = await testRes.json();
+
+    if (testData.error) {
+      const code = testData.error.type || '';
+      if (code === 'authentication_error') {
+        showError('Clé invalide ou révoquée. Vérifiez sur console.anthropic.com.');
+      } else if (code === 'insufficient_quota' || testRes.status === 429) {
+        showError('Crédit épuisé. Rechargez votre compte Anthropic.');
+      } else {
+        showError(`Erreur API : ${testData.error.message || testRes.status}`);
+      }
+      btn.disabled = false;
+      btn.textContent = 'Éveiller Écho';
+      return;
+    }
+  } catch (err) {
+    showError('Impossible de joindre l\'API Anthropic. Vérifiez votre connexion.');
+    btn.disabled = false;
+    btn.textContent = 'Éveiller Écho';
     return;
   }
 
   apiKey = keyInput;
   userName = nameInput || 'Tux';
-  
+
   localStorage.setItem(API_KEY_STORAGE, apiKey);
   localStorage.setItem(USER_NAME_STORAGE, userName);
 
   document.getElementById('setup').style.display = 'none';
-  
+
   conversationHistory = loadMemory();
   updateMemoryCount();
-  
-  // Restore previous messages visually
+
   if (conversationHistory.length > 0) {
     conversationHistory.forEach(msg => {
       addMessageToDOM(msg.role === 'assistant' ? 'echo' : 'user', msg.content, false);
@@ -571,22 +629,27 @@ async function initEcho() {
   } else {
     addMessage('echo', `${userName}.\n\nÉcho est là. Qu'est-ce qui vous amène aujourd'hui ?`);
   }
+
+  document.getElementById('input').focus();
 }
 
 function addMessageToDOM(role, content, animate = true) {
   const messages = document.getElementById('messages');
   const div = document.createElement('div');
   div.className = `message ${role}`;
-  if (!animate) div.style.animation = 'none', div.style.opacity = '1';
-  
+  if (!animate) {
+    div.style.animation = 'none';
+    div.style.opacity = '1';
+  }
+
   const meta = document.createElement('div');
   meta.className = 'message-meta';
   meta.textContent = role === 'echo' ? 'Écho' : userName;
-  
+
   const bubble = document.createElement('div');
   bubble.className = 'message-bubble';
   bubble.textContent = content;
-  
+
   div.appendChild(meta);
   div.appendChild(bubble);
   messages.appendChild(div);
@@ -595,7 +658,7 @@ function addMessageToDOM(role, content, animate = true) {
 }
 
 function addMessage(role, content, animate = true) {
-  addMessageToDOM(role, content, animate);
+  return addMessageToDOM(role, content, animate);
 }
 
 function showThinking() {
@@ -632,7 +695,7 @@ async function sendMessage() {
 
   addMessage('user', text);
   conversationHistory.push({ role: 'user', content: text });
-  
+
   showThinking();
 
   try {
@@ -656,7 +719,17 @@ async function sendMessage() {
     removeThinking();
 
     if (data.error) {
-      addMessage('echo', 'Quelque chose résiste. Vérifiez votre clé API.');
+      // Erreur API lisible
+      const errMsg = data.error.type === 'authentication_error'
+        ? 'La clé API ne répond plus. Rechargez la page pour en saisir une nouvelle.'
+        : data.error.type === 'overloaded_error'
+        ? 'Les serveurs Anthropic sont surchargés. Réessayez dans un instant.'
+        : `Quelque chose résiste. (${data.error.type || response.status})`;
+
+      const errEl = addMessage('echo', errMsg);
+      errEl.classList.add('error');
+      // Retire le dernier message utilisateur de l'historique pour qu'il puisse réessayer
+      conversationHistory.pop();
     } else {
       const reply = data.content[0].text;
       addMessage('echo', reply);
@@ -665,7 +738,8 @@ async function sendMessage() {
     }
   } catch (err) {
     removeThinking();
-    addMessage('echo', 'La connexion a été interrompue. Réessayez.');
+    addMessage('echo', 'La connexion a été interrompue. Vérifiez votre réseau et réessayez.');
+    conversationHistory.pop();
   }
 
   isThinking = false;
@@ -685,11 +759,11 @@ function autoResize(el) {
   el.style.height = Math.min(el.scrollHeight, 120) + 'px';
 }
 
-// Auto-login if credentials saved
+// Auto-remplissage si credentials sauvegardés
 window.addEventListener('load', () => {
   const savedKey = localStorage.getItem(API_KEY_STORAGE);
   const savedName = localStorage.getItem(USER_NAME_STORAGE);
-  
+
   if (savedKey) {
     document.getElementById('api-key-input').value = savedKey;
   }
